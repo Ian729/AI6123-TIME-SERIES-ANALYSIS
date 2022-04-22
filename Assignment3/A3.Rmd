@@ -1,0 +1,141 @@
+---
+title:  |
+  | AI6123 Time Series Analysis
+  | Assignment 3
+  | Zheng, Weixiang
+  | G2103278G
+author: "Zheng Weixiang"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Data
+
+```{r,warning=FALSE,message=FALSE}
+library(quantmod)
+library(ggplot2)
+library(forecast)
+library(tseries)
+library(TSA)
+library(fGarch)
+
+stock.data = getSymbols("AAPL", from='2002-02-01', to='2017-02-01',
+                         src='yahoo', auto.assign = F) 
+stock.data = na.omit(stock.data)
+```
+
+## Plot Financial Chart
+```{r}
+chartSeries(stock.data, theme = "white", name = "AAPL")
+```
+
+## Time Series Plot
+```{r}
+apple = stock.data[,4] # use close value as stock value
+names(apple) = 'Apple Stock Prices (2002-2017)'
+ggplot(apple, aes(as.Date(time(apple)), as.matrix(apple))) + 
+  geom_line(colour = "black") + 
+  xlab("Year") +
+  ylab("Stock Value")
+```
+We can see clearly in the plot that large changes tend to follow by large changes and small changes tend to follow by small changes. It suggests Volatility Clustering. Volatility Clustering also implies conditional variance. We can probably use ARCH models to fit the above data.
+
+## ACF and PACF
+
+```{r pressure, echo=FALSE}
+ggAcf(apple)
+ggPacf(apple)
+```
+We can see from the ACF plot that ACF curve dies down slowly and it suggests the time series is non-stationary.
+
+## Seasonal Decomposition
+```{r}
+monthly = to.monthly(stock.data)
+time_series = ts(Ad(monthly), frequency = 12)
+fit.stl = stl(time_series[,1], s.window = "period")
+autoplot(fit.stl, main="STL Decomposition")
+```
+We can see from the STL Decomposition that there is indeed a clear upward trend and a repeating seasonal component and then the remainder shows a sign of white noise.
+
+Here we perform a BoxCox Transformation with Lambda 0(Log Transformation) on the data.
+
+## Data Transformation
+```{r}
+apple_t = diff(BoxCox(apple, lambda = 0))
+apple_t = apple_t[!is.na(apple_t)]
+autoplot(ggAcf(apple_t, lag.max = NULL, plot = FALSE, na.action = na.omit))
+autoplot(ggPacf(apple_t, lag.max = NULL, plot = FALSE, na.action = na.omit))
+autoplot(ggAcf(apple_t^2, lag.max = NULL, plot = FALSE, na.action = na.omit))
+autoplot(ggPacf(apple_t^2, lag.max = NULL, plot = FALSE, na.action = na.omit))
+adf.test(apple_t)
+```
+The ACF and PACF plots shows that the closing prices have little serial correlation. With the volatility clustering, it means non-constant variances. By ACF and PACF plots of the absolute and squared values, we can see high level of correlation. Therefore, the returns are not iid.  
+Also, p value = 0.01, therefore significant enough to reject null hypothesis. The alternative hypothesis is stationary.
+ 
+## EACF
+```{r}
+eacf(apple_t)
+eacf(abs(apple_t))
+```
+The upper EACF plot suggest (p,q) = (4,0), the second EACF suggests (p,q) = (1,1), (2,2) or (3,3)
+
+## GARCH Models
+```{r, echo=TRUE, warning=FALSE}
+
+garch.40 = garch(apple_t, order=c(4,0))
+AIC(garch.40)
+
+
+garch.11 = garch(apple_t, order=c(1,1))
+AIC(garch.11)
+
+
+garch.22 = garch(apple_t, order=c(2,2))
+AIC(garch.22)
+
+
+garch.33 = garch(apple_t, order=c(3,3))
+AIC(garch.33)
+
+```
+From the result, we can see that (p,q) = (1,1) gives the best result with the lowest AIC = -18554.32
+
+## GARCH(1,1) Disgnostics
+```{r}
+plot(residuals(garch.11),type='h',ylab='Standardized Residuals', main='GARCH(1,1)')
+qqnorm(residuals(garch.11)); qqline(residuals(garch.11), col = 2)
+gBox(garch.11,method='squared') # above p-value
+tsdisplay(residuals(garch.11), lag.max = 40, main="GARCH(1,1)")
+```
+The ACF plot suggests the residuals are uncorrelated. The p-values are all higher than 0.05. This suggests the squared standardized residuals independent.
+
+## Forecast
+In this section, we fit the data into two models: Auto ARIMA Forecast Model and ARCH Forecast Model.
+We use the R package fGarch for ARCH Forecast Model. 
+
+### ARIMA Forecast Model
+```{r}
+apple_arima <- auto.arima(apple, lambda=0, d=1)
+apple_arima_pred <- forecast(apple_arima, h=300)
+autoplot(apple_arima_pred)
+```
+ 
+### ARCH Forecast Model
+```{r}
+garch_fit <- garchFit(formula = ~garch(1, 1), data = apple_t, trace = F, cond.dist = "std")
+plot(garch_fit, which=3)  #Series with 2 Conditional SD Superimposed
+garch_pred <- predict(garch_fit, n.ahead = 30, plot=TRUE)
+```
+ 
+## Conclusion
+In this project, we first retrieve the data from Yahoo Finance. We plot the finance data, then we plot it as a time series plot. It shows volatility clustering, which implies conditional variance. In addition, we can see a clear upward trend. By having a look at the ACF plot, we can see it is not stationary. We apply a log transformation and a one-time differencing were used to make it stationary. After checking again to make sure it is stationary we found it is not iid.
+After examination of the dataset, a ARCH model was used to fit the time series. We used EACF to find some possible p,q values, and found the best combination is GARCH(1,1). Then we did a diagnostics checking.
+We compared the AutoARIMA Model Forecasting and the fGarch Model Forecast at the end.
+
+## Appendix: Code
+
+```{r ref.label=knitr::all_labels(), echo=TRUE, eval=FALSE}
+```
